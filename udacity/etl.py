@@ -1,6 +1,6 @@
 import json
 import datetime
-
+from pyspark.sql import SparkSession
 def aws_module(resource):
 
     """aws_module
@@ -19,15 +19,14 @@ def aws_module(resource):
     return boto3.resource(resource, aws_access_key_id=creds['keyId'], aws_secret_access_key=creds['keySec'])
 
 
-def process_song(file, conn):
+def process_song(file):
 
     """process_song
 
-    Process a song file by inserting it into the songs redshift temp table
+    Insert songs and artists into parquet files in S3
 
     Parameters:
     file (string): Song file content
-    conn: Redshift session
 
     """
 
@@ -51,16 +50,15 @@ def process_song(file, conn):
         None if song['duration'] is None else song['duration']))
 
 
-def process_log(file, conn):
+def process_log(file):
 
 
     """process_log
 
-    Process a log file by inserting it into the logs redshift temp table
+    Insert users and songplays into parquet files in S3
 
     Parameters:
     file (string): Log file content
-    conn: Redshift session
 
     """
 
@@ -102,108 +100,31 @@ def process_log(file, conn):
             None if log['lastName'] is None else log['lastName'].replace("'", "''"),
             None if log['gender'] is None else log['gender'].replace("'", "''"))
 
-        print(sql)
-        cur.execute(sql)
 
-def insert_artists_songs(conn):
-
-    """insert_artists_songs
-
-    Process a temp song record by inserting song and artist rows therefrom
-
-    Parameters:
-    conn: Redshift session
-
-    """
-
-
-    cur = conn.cursor()
-    sql = """
-        insert into public.artists
-            select distinct artist_id, name, location, latitude, longitude
-            from stage_songs
-            left join public.artists using(artist_id, name, location, latitude, longitude)
-            where public.artists.artist_id is null
-    """
-
-    cur.execute(sql)
-
-    sql = """
-        insert into public.songs
-            select distinct song_id, title, artist_id, year, duration
-            from stage_songs
-            left join public.songs using(song_id, title, artist_id, year, duration)
-            where public.songs.song_id is null
-    """
-
-    cur.execute(sql)
-
-    conn.commit()
-
-def song_id_from_song_name(conn, song_name):
+def song_id_from_song_name(song_name):
 
     """song_id_from_song_name
 
     Look up the ID of the song from its name
 
     Parameters:
-    conn: Redshift session
     song_name (string): Name of the song whose ID we need
 
     """
 
-    cur = conn.cursor()
-    cur.execute("select song_id from public.songs where title = '" + song_name + "'")
-    for record in cur:
-        return record[0]
-
-def artist_id_from_artist_name(conn, artist_name):
+def artist_id_from_artist_name(artist_name):
 
     """artist_id_from_artist_name
 
     Look up the ID of the artist from its name
 
     Parameters:
-    conn: Redshift session
     song_name (string): Name of the artist whose ID we need
 
     """
 
-
-    cur = conn.cursor()
-    cur.execute("select artist_id from public.artists where name = '" + artist_name + "'")
-    for record in cur:
-        return record[0]
-
-def insert_users_songplays(conn):
-
-    """insert_users_songplays
-
-    Create users and song play records from the songplay log events
-
-    Parameters:
-    conn: Redshift session
-
-    """
-
-
-    cur = conn.cursor()
-    cur.execute("""
-        insert into public.users
-            select user_id, first_name, last_name, gender, level
-            from stage_logs
-            left join public.users using(user_id, first_name, last_name, gender, level)
-            where public.users.user_id is null
-    """)
-
-    cur.execute("""
-        insert into public.songplays
-            select start_time, user_id, level, song_id, artist_id, session_id, location, user_agent
-            from stage_logs
-    """)
-
 def main():
-    create_temp_tables(conn)
+    spark = SparkSession.builder.master("local").appName("parquet_example").getOrCreate()
     s3 = aws_module('s3')
     bucket = s3.Bucket('scpro2-udacity-data-engineering')
     for obj in bucket.objects.all():
