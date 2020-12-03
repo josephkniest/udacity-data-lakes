@@ -4,6 +4,9 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import udf, col
 from pyspark.sql.functions import year, month, dayofmonth, hour, weekofyear, date_format
+from pyspark.sql.types import StructField
+from pyspark.sql.types import StringType
+from pyspark.sql.types import StructType
 import boto3
 import json
 import configparser
@@ -19,22 +22,33 @@ def frame_row_from_json(json, spark):
     f.write(json)
     f.close()
     return spark.read.json(file)
-    
+
 def process_song_data(spark, ibucket):
     """process_song
     Process a song file by inserting artist and song into s3
     """
-    artists = spark.createDataFrame("""
-        artist_id STRING, name STRING, location STRING, latitude INTEGER, longitude INTEGER
-    """)
-    songs = spark.createDataFrame("""
-        song_id STRING, title STRING, artist_id STRING, year INTEGER, duration INTEGER
-    """)
+     #spark.createDataFrame
     
+    artists = frame_row_from_json(json.dumps({
+        'artist_id': 'S',
+        'name': 'S',
+        'location': 'S',
+        'latitude': 1,
+        'longitude': 1
+    }), spark)
+    
+    songs = frame_row_from_json(json.dumps({
+        'song_id': 'S',
+        'title': 'S',
+        'artist_id': 'S',
+        'year': 1,
+        'duration': 1
+    }), spark)
+
     for obj in ibucket.objects.all():
         if "song_data" in obj.key:
             songRec = json.loads(obj.get()['Body'].read().decode("utf-8"))
-            
+
             artist = {}
             artist["artist_id"] = songRec["artist_id"]
             artist["name"] = songRec["artist_name"]
@@ -44,7 +58,7 @@ def process_song_data(spark, ibucket):
             row = frame_row_from_json(json.dumps(artist), spark)
             row.show()
             artists.union(row)
-            
+
             song = {}
             song["song_id"] = songRec["song_id"]
             song["title"] = songRec["title"]
@@ -54,11 +68,11 @@ def process_song_data(spark, ibucket):
             row = frame_row_from_json(json.dumps(song), spark)
             row.show()
             artists.union(row)
-            
+
     artists.write.parquet("s3a://scpro2-udacity-data-engineering-output/artists.parquet", mode="overwrite")
     songs.write.parquet("s3a://scpro2-udacity-data-engineering-output/songs.parquet", mode="overwrite")
-    
-    
+
+
 def process_log(file, spark, outbucket):
     """process_log
     Process a log file by inserting the song play and user into s3
@@ -68,8 +82,8 @@ def process_log(file, spark, outbucket):
     jsonS = jsonS[:-1] + ']'
     logs = json.loads(jsonS)
     print(logs)
-    
-    
+
+
 def main():
     spark = SparkSession.builder.config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:2.7.0").getOrCreate()
     file = open('./creds.json', "r")
@@ -78,18 +92,18 @@ def main():
 
     spark.sparkContext._jsc.hadoopConfiguration().set("fs.s3a.access.key", creds['keyId'])
     spark.sparkContext._jsc.hadoopConfiguration().set("fs.s3a.secret.key", creds['keySec'])
-    
+
     s3 = boto3.resource('s3', aws_access_key_id=creds['keyId'], aws_secret_access_key=creds['keySec'])
     ibucket = s3.Bucket('scpro2-udacity-data-engineering')
     obucket = s3.Bucket('scpro2-udacity-data-engineering-output')
-    
+
     process_song_data(spark, ibucket)
 
     #for obj in ibucket.objects.all():
         #if "log_data" in obj.key:
             #process_log(obj.get()['Body'].read().decode("utf-8"), spark, obucket)
 
-    
+
 if __name__ == "__main__":
     main()
 
