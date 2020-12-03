@@ -8,8 +8,8 @@ import boto3
 import json
 import configparser
 
-def load_in_memory_json(json, spark):
-    """load_in_memory_json
+def frame_row_from_json(json, spark):
+    """frame_row_from_json
     This needs to exist as pyspark can't load in memory json directly
     it only supports reading files from disk. So here we write the json
     payload to a temp file on disc then read it back with spark.
@@ -20,13 +20,43 @@ def load_in_memory_json(json, spark):
     f.close()
     return spark.read.json(file)
     
-def process_song(file, spark, outbucket):
+def process_song_data(spark, ibucket):
     """process_song
     Process a song file by inserting artist and song into s3
     """
-    print(json.loads(file)['artist_id'])
-    frame = load_in_memory_json(file, spark)
-    frame.write.parquet("s3a://scpro2-udacity-data-engineering-output/", mode="overwrite")
+    artists = spark.createDataFrame("""
+        artist_id STRING, name STRING, location STRING, latitude INTEGER, longitude INTEGER
+    """)
+    songs = spark.createDataFrame("""
+        song_id STRING, title STRING, artist_id STRING, year INTEGER, duration INTEGER
+    """)
+    
+    for obj in ibucket.objects.all():
+        if "song_data" in obj.key:
+            songRec = json.loads(obj.get()['Body'].read().decode("utf-8"))
+            
+            artist = {}
+            artist["artist_id"] = songRec["artist_id"]
+            artist["name"] = songRec["artist_name"]
+            artist["location"] = songRec["artist_location"]
+            artist["latitude"] = songRec["artist_latitude"]
+            artist["longitude"] = songRec["artist_longitude"]
+            row = frame_row_from_json(json.dumps(artist), spark)
+            row.show()
+            artists.union(row)
+            
+            song = {}
+            song["song_id"] = songRec["song_id"]
+            song["title"] = songRec["title"]
+            song["artist_id"] = songRec["artist_id"]
+            song["year"] = songRec["year"]
+            song["duration"] = songRec["duration"]
+            row = frame_row_from_json(json.dumps(song), spark)
+            row.show()
+            artists.union(row)
+            
+    artists.write.parquet("s3a://scpro2-udacity-data-engineering-output/artists.parquet", mode="overwrite")
+    songs.write.parquet("s3a://scpro2-udacity-data-engineering-output/songs.parquet", mode="overwrite")
     
     
 def process_log(file, spark, outbucket):
@@ -53,9 +83,7 @@ def main():
     ibucket = s3.Bucket('scpro2-udacity-data-engineering')
     obucket = s3.Bucket('scpro2-udacity-data-engineering-output')
     
-    for obj in ibucket.objects.all():
-        if "song_data" in obj.key:
-            process_song(obj.get()['Body'].read().decode("utf-8"), spark, obucket)
+    process_song_data(spark, ibucket)
 
     #for obj in ibucket.objects.all():
         #if "log_data" in obj.key:
