@@ -24,9 +24,9 @@ def frame_row_from_json(json, spark):
     f.close()
     return spark.read.json(file).toPandas()
 
-def process_song_data(spark, bucket):
-    """process_song
-    Process a song file by inserting artist and song into s3
+def process_songs(spark, bucket):
+    """process_songs
+    Process all song files from the source s3 bucket by inserting artist and song into s3
     """
     
     artists = frame_row_from_json(json.dumps({
@@ -66,9 +66,26 @@ def process_song_data(spark, bucket):
     spark.createDataFrame(artists).write.parquet("s3a://scpro2-udacity-data-engineering-output/artists.parquet", mode="overwrite")
     spark.createDataFrame(songs).write.parquet("s3a://scpro2-udacity-data-engineering-output/songs.parquet", mode="overwrite")
 
-def process_logs(spark, bucket):
+def artist_id_from_name(name, spark):
+    """artist_id_from_name
+    Get the artist ID from the artist name
+    """
+    return SQLContext(spark.sparkContext).read.parquet("s3a://scpro2-udacity-data-engineering-output/artists.parquet"
+        ).select("artist_id"
+        ).where("name = '{}'".format(name)).take(1)[0].artist_id
+    
+
+def song_id_from_title(title, spark):
+    """song_id_from_title
+    Get the song ID from the song title
+    """
+    return SQLContext(spark.sparkContext).read.parquet("s3a://scpro2-udacity-data-engineering-output/songs.parquet"
+        ).select("song_id"
+        ).where("title = '{}'".format(title)).take(1)[0].song_id
+    
+def process_logs(artistsAndSongs, spark, bucket):
     """process_logs
-    Process a log file by inserting the song play and user into s3
+    Process log files from source s3 by inserting the song play and user into s3
     """
     
     dayOfTheWeek = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -128,16 +145,16 @@ def process_logs(spark, bucket):
                     'level': log['level']
                 }), spark))
                 
-                plays = frame_row_from_json(json.dumps({
+                plays = plays.append(frame_row_from_json(json.dumps({
                     'start_time': log['ts'],
-                    'user_id': log['user_id'],
-                    'song_id': 'S',
-                    'artist_id': 'S',
+                    'user_id': log['userId'],
+                    'song_id': song_id_from_title(log['song'], spark),
+                    'artist_id': artist_id_from_name(log['artist'], spark),
                     'level': log['level'],
                     'session_id': log['sessionId'],
                     'location': log['location'],
                     'user_agent': log['userAgent']
-                }), spark)
+                }), spark))
                 
     spark.createDataFrame(time).write.parquet("s3a://scpro2-udacity-data-engineering-output/time.parquet", mode="overwrite")
     spark.createDataFrame(users).write.parquet("s3a://scpro2-udacity-data-engineering-output/users.parquet", mode="overwrite")
@@ -162,7 +179,7 @@ def main():
     s3 = boto3.resource('s3', aws_access_key_id=creds['keyId'], aws_secret_access_key=creds['keySec'])
     bucket = s3.Bucket('scpro2-udacity-data-engineering')
     
-    process_song_data(spark, bucket)
+    process_songs(spark, bucket)
     process_logs(spark, bucket)
     print_parquet_files(SQLContext(spark.sparkContext))
 
