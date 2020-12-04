@@ -10,7 +10,8 @@ from pyspark.sql.types import StructType
 import boto3
 import json
 import configparser
-
+from pyspark.sql import SQLContext
+import datetime
 def frame_row_from_json(json, spark):
     """frame_row_from_json
     This needs to exist as pyspark can't load in memory json directly
@@ -21,9 +22,9 @@ def frame_row_from_json(json, spark):
     f = open(file, "w")
     f.write(json)
     f.close()
-    return spark.read.json(file)
+    return spark.read.json(file).toPandas()
 
-def process_song_data(spark, ibucket):
+def process_song_data(spark, bucket):
     """process_song
     Process a song file by inserting artist and song into s3
     """
@@ -32,59 +33,122 @@ def process_song_data(spark, ibucket):
         'artist_id': 'S',
         'name': 'S',
         'location': 'S',
-        'latitude': 1,
-        'longitude': 1
+        'latitude': 1000000.100000,
+        'longitude': 1000000.100000
     }), spark)
     
     songs = frame_row_from_json(json.dumps({
         'song_id': 'S',
         'title': 'S',
         'artist_id': 'S',
-        'year': 1,
-        'duration': 1
+        'year': 1111,
+        'duration': 1000000.100000
     }), spark)
     
-    for obj in ibucket.objects.all():
+    for obj in bucket.objects.all():
         if "song_data" in obj.key:
             songRec = json.loads(obj.get()['Body'].read().decode("utf-8"))
-            artists = artists.union(frame_row_from_json(json.dumps({
+            artists = artists.append(frame_row_from_json(json.dumps({
                 "artist_id": songRec["artist_id"],
                 "name": songRec["artist_name"],
                 "location": songRec["artist_location"],
                 "latitude": songRec["artist_latitude"],
                 "longitude": songRec["artist_longitude"]
             }), spark))
-            artists.show()
-            print('a')
-            songs = songs.union(frame_row_from_json(json.dumps({
+            songs = songs.append(frame_row_from_json(json.dumps({
                 "song_id": songRec["song_id"],
                 "title": songRec["title"],
                 "artist_id": songRec["artist_id"],
                 "year": songRec["year"],
                 "duration": songRec["duration"]
             }), spark))
-            songs.show()
-            print('s')
-            
 
-    artists.write.parquet("s3a://scpro2-udacity-data-engineering-output/artists.parquet", mode="overwrite")
-    songs.write.parquet("s3a://scpro2-udacity-data-engineering-output/songs.parquet", mode="overwrite")
+    spark.createDataFrame(artists).write.parquet("s3a://scpro2-udacity-data-engineering-output/artists.parquet", mode="overwrite")
+    spark.createDataFrame(songs).write.parquet("s3a://scpro2-udacity-data-engineering-output/songs.parquet", mode="overwrite")
 
-
-def process_log(file, spark, outbucket):
-    """process_log
+def process_logs(spark, bucket):
+    """process_logs
     Process a log file by inserting the song play and user into s3
     """
+    
     dayOfTheWeek = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-    jsonS = '[' + file.replace("}", "},")
-    jsonS = jsonS[:-1] + ']'
-    logs = json.loads(jsonS)
-    print(logs)
-
-
-def print_parquet_files(bucket):
+    
+    time = frame_row_from_json(json.dumps({
+        'start_time': 1000000100000,
+        'hour': 0,
+        'day': 0,
+        'week': 0,
+        'month': 10,
+        'year': 0,
+        'weekday': 'S'
+    }), spark)
+    
+    users = frame_row_from_json(json.dumps({
+        'user_id': 'S',
+        'first_name': 'S',
+        'last_name': 'S',
+        'gender': 'S',
+        'level': 'S'
+    }), spark)
+    
+    plays = frame_row_from_json(json.dumps({
+        'start_time': 1000000100000,
+        'user_id': 'S',
+        'song_id': 'S',
+        'artist_id': 'S',
+        'level': 'S',
+        'session_id': 1000000100000,
+        'location': 'S',
+        'user_agent': 'S'
+    }), spark)
+    
     for obj in bucket.objects.all():
-        print(obj.get()['Body'].read())
+        if "log_data" in obj.key:
+            file = obj.get()['Body'].read().decode("utf-8")
+            jsonS = '[' + file.replace("}", "},")
+            jsonS = jsonS[:-1] + ']'
+            logs = json.loads(jsonS)
+            for log in logs:
+                dt = datetime.datetime.fromtimestamp(log["ts"] / 1000.0)
+                time = time.append(frame_row_from_json(json.dumps({
+                    'start_time': log['ts'],
+                    'hour': dt.hour,
+                    'day': dt.day,
+                    'week': dt.isocalendar()[1],
+                    'month': dt.month,
+                    'year': dt.year,
+                    'weekday': dayOfTheWeek[dt.weekday()]
+                }), spark))
+                
+                users = users.append(frame_row_from_json(json.dumps({
+                    'user_id': log['userId'],
+                    'first_name': log['firstName'],
+                    'last_name': log['lastName'],
+                    'gender': log['gender'],
+                    'level': log['level']
+                }), spark))
+                
+                plays = frame_row_from_json(json.dumps({
+                    'start_time': log['ts'],
+                    'user_id': log['user_id'],
+                    'song_id': 'S',
+                    'artist_id': 'S',
+                    'level': log['level'],
+                    'session_id': log['sessionId'],
+                    'location': log['location'],
+                    'user_agent': log['userAgent']
+                }), spark)
+                
+    spark.createDataFrame(time).write.parquet("s3a://scpro2-udacity-data-engineering-output/time.parquet", mode="overwrite")
+    spark.createDataFrame(users).write.parquet("s3a://scpro2-udacity-data-engineering-output/users.parquet", mode="overwrite")
+    spark.createDataFrame(plays).write.parquet("s3a://scpro2-udacity-data-engineering-output/songplays.parquet", mode="overwrite")
+    
+def print_parquet_files(ctx):
+    ctx.read.parquet("s3a://scpro2-udacity-data-engineering-output/artists.parquet").show()
+    ctx.read.parquet("s3a://scpro2-udacity-data-engineering-output/songs.parquet").show()
+    ctx.read.parquet("s3a://scpro2-udacity-data-engineering-output/time.parquet").show()
+    ctx.read.parquet("s3a://scpro2-udacity-data-engineering-output/users.parquet").show()
+    ctx.read.parquet("s3a://scpro2-udacity-data-engineering-output/songplays.parquet").show()
     
 def main():
     spark = SparkSession.builder.config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:2.7.0").getOrCreate()
@@ -96,16 +160,11 @@ def main():
     spark.sparkContext._jsc.hadoopConfiguration().set("fs.s3a.secret.key", creds['keySec'])
 
     s3 = boto3.resource('s3', aws_access_key_id=creds['keyId'], aws_secret_access_key=creds['keySec'])
-    ibucket = s3.Bucket('scpro2-udacity-data-engineering')
-
-    process_song_data(spark, ibucket)
+    bucket = s3.Bucket('scpro2-udacity-data-engineering')
     
-    print_parquet_files(s3.Bucket('scpro2-udacity-data-engineering-output'))
-    
-    #for obj in ibucket.objects.all():
-        #if "log_data" in obj.key:
-            #process_log(obj.get()['Body'].read().decode("utf-8"), spark, obucket)
-
+    process_song_data(spark, bucket)
+    process_logs(spark, bucket)
+    print_parquet_files(SQLContext(spark.sparkContext))
 
 if __name__ == "__main__":
     main()
